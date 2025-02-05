@@ -1,156 +1,194 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
-import { BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
+import api from '../services/api';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, Legend, ResponsiveContainer as RechartsResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
+
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
 
 const Dashboard = () => {
-  const months = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-  ];
-
-  const [transactions, setTransactions] = useState([]);
-  const [search, setSearch] = useState("");
-  const [selectedMonth, setSelectedMonth] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [selectedMonth, setSelectedMonth] = useState('');
+  const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [perPage, setPerPage] = useState(10);
+  const [transactions, setTransactions] = useState([]);
+  const [totalPages, setTotalPages] = useState(0);
   const [stats, setStats] = useState({
     totalSaleAmount: 0,
     totalSoldItems: 0,
     totalNotSoldItems: 0
   });
   const [chartData, setChartData] = useState([]);
+  const [pieData, setPieData] = useState([]);
 
-  // Fetch transactions
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  // Custom colors for charts
+  const CHART_COLORS = {
+    bar: '#4F46E5',
+    barHover: '#6366F1',
+    pie: ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899']
+  };
+
+  // Custom tooltip for bar chart with dark theme
+  const CustomBarTooltip = ({ active, payload }) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-gray-800/90 backdrop-blur-sm px-4 py-3 rounded-lg border border-gray-700/50 shadow-xl">
+          <p className="text-gray-300 font-medium">{`Price Range: ${payload[0].payload.range}`}</p>
+          <p className="text-cyan-400 font-semibold">{`Items: ${payload[0].value}`}</p>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  // Custom tooltip for pie chart
+  const CustomPieTooltip = ({ active, payload }) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-gray-800/90 backdrop-blur-sm px-4 py-3 rounded-lg border border-gray-700/50 shadow-xl">
+          <p className="text-gray-300 font-medium">{`Category: ${payload[0].name}`}</p>
+          <p className="text-cyan-400 font-semibold">{`Items: ${payload[0].value}`}</p>
+          <p className="text-gray-400 text-sm">{`(${(payload[0].percent * 100).toFixed(1)}%)`}</p>
+        </div>
+      );
+    }
+    return null;
+  };
+
   useEffect(() => {
-    const fetchTransactions = async () => {
+    fetchData();
+  }, [selectedMonth, currentPage, search]);
+
+  const fetchData = async () => {
+    try {
       setLoading(true);
-      setError("");
-      try {
-        const response = await axios.get(
-          `http://localhost:8000/api/transactions/transactions?page=${currentPage}&limit=${perPage}&search=${search}`
-        );
-        const { data, pagination } = response.data;
-        setTransactions(data || []);
-        setCurrentPage(pagination.currentPage);
-        setTotalPages(pagination.totalPages);
-      } catch (err) {
-        setError("Failed to fetch transactions");
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchTransactions();
-  }, [currentPage, perPage, search]);
+      setError(null);
 
-  // Fetch statistics and chart data
-  useEffect(() => {
-    const fetchStats = async () => {
-      if (!selectedMonth) return;
-      try {
-        const monthIndex = months.indexOf(selectedMonth) + 1;
-        const response = await axios.get(
-          `http://localhost:8000/api/transactions/combined-stats?month=${monthIndex}`
-        );
-        setStats(response.data.saleStats);
-        setChartData(response.data.priceRangeChart);
-      } catch (err) {
-        setError("Failed to fetch statistics");
+      const [transactionsRes, combinedStats] = await Promise.all([
+        api.getTransactions(currentPage, 10, search),
+        selectedMonth ? api.getCombinedStats(months.indexOf(selectedMonth) + 1) : null
+      ]);
+
+      setTransactions(transactionsRes.data);
+      setTotalPages(transactionsRes.pagination.totalPages);
+
+      if (combinedStats) {
+        setStats(combinedStats.saleStats);
+        setChartData(combinedStats.priceRangeChart);
+        setPieData(combinedStats.categoryPieChart);
       }
-    };
-    fetchStats();
-  }, [selectedMonth]);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSearchChange = (e) => {
     setSearch(e.target.value);
-    setCurrentPage(1); // Reset to page 1 on search
+    setCurrentPage(1);
   };
 
   const handleMonthChange = (e) => {
     setSelectedMonth(e.target.value);
-    setCurrentPage(1); // Reset to page 1 on filter change
+    setCurrentPage(1);
   };
 
-  const filteredTransactions = transactions.filter((transaction) => {
-    const transactionDate = new Date(transaction.dateOfSale);
-    return (
-      (search === "" || transaction.title.toLowerCase().includes(search.toLowerCase())) &&
-      (selectedMonth === "" || transactionDate.getMonth() === months.indexOf(selectedMonth))
-    );
-  });
-
   return (
-    <div className="flex flex-col h-full bg-gradient-to-r from-teal-400 to-yellow-200">
-      <div className="flex flex-row flex-1">
-        {/* Transaction Table Section */}
-        <div className="w-1/2 h-[300px] p-4">
-          <h1 className="text-center font-bold text-2xl text-white">Transaction Table</h1>
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 to-gray-800 p-8">
+      {/* Header Section */}
+      <div className="mb-8 text-center">
+        <h1 className="text-4xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
+          Sales Dashboard
+        </h1>
+        <p className="text-gray-400 mt-2">Interactive Transaction Analytics</p>
+      </div>
 
-          {/* Search and Filter */}
-          <div className="my-4 flex justify-between items-center px-10 mx-8">
-            <input
-              type="text"
-              placeholder="Search transaction"
-              className="p-2 bg-yellow-200 outline-none font-bold text-center text-sm placeholder:text-black rounded-3xl w-full md:w-auto"
-              value={search}
-              onChange={handleSearchChange}
-            />
-            <select
-              value={selectedMonth}
-              onChange={handleMonthChange}
-              className="p-2 text-sm bg-yellow-300 outline-none placeholder:text-black rounded-lg"
-            >
-              <option value="">Select month</option>
-              {months.map((month, index) => (
-                <option value={month} key={index}>
-                  {month}
-                </option>
-              ))}
-            </select>
-          </div>
+      {/* Controls Section */}
+      <div className="flex flex-col md:flex-row gap-4 mb-8">
+        <input
+          type="text"
+          placeholder="🔍 Search transactions..."
+          className="flex-1 p-3 rounded-lg bg-gray-800 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+          value={search}
+          onChange={handleSearchChange}
+        />
+        <select
+          value={selectedMonth}
+          onChange={handleMonthChange}
+          className="p-3 rounded-lg bg-gray-800 text-white focus:outline-none focus:ring-2 focus:ring-cyan-400"
+        >
+          <option value="">📅 All Months</option>
+          {months.map((month, index) => (
+            <option value={month} key={index}>
+              {month}
+            </option>
+          ))}
+        </select>
+      </div>
 
-          {/* Transaction Table */}
+      {/* Main Content */}
+      <div className="grid lg:grid-cols-2 gap-8">
+        {/* Transactions Table */}
+        <div className="bg-gray-800 rounded-xl p-6 shadow-2xl">
+          <h2 className="text-2xl font-semibold text-cyan-400 mb-6">Transaction History</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-[10px] text-left rtl:text-right text-gray-500 dark:text-gray-400">
-              <thead className="text-xs text-white uppercase bg-gray-700 dark:bg-gray-700 dark:text-white-400">
+            <table className="w-full">
+              <thead className="bg-gray-700">
                 <tr>
-                  <th scope="col" className="px-1 py-1">ID</th>
-                  <th scope="col" className="px-1 py-1">Transaction</th>
-                  <th scope="col" className="px-1 py-1">Price</th>
-                  <th scope="col" className="px-1 py-1">Category</th>
-                  <th scope="col" className="px-1 py-1">Date</th>
+                  {['ID', 'Transaction', 'Price', 'Category', 'Date'].map((header) => (
+                    <th
+                      key={header}
+                      className="px-4 py-3 text-left text-sm font-medium text-gray-300 uppercase tracking-wider"
+                    >
+                      {header}
+                    </th>
+                  ))}
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-gray-700">
                 {loading ? (
                   <tr>
-                    <td colSpan="5" className="text-center text-white py-4">Loading...</td>
+                    <td colSpan="5" className="py-6 text-center text-gray-400">
+                      ⏳ Loading transactions...
+                    </td>
                   </tr>
                 ) : error ? (
                   <tr>
-                    <td colSpan="5" className="text-center text-red-500 py-4">{error}</td>
+                    <td colSpan="5" className="py-6 text-center text-red-400">
+                      ❗ {error}
+                    </td>
                   </tr>
-                ) : filteredTransactions.length === 0 ? (
+                ) : transactions.length === 0 ? (
                   <tr>
-                    <td colSpan="5" className="text-center text-white py-4">
-                      No transactions found.
+                    <td colSpan="5" className="py-6 text-center text-gray-400">
+                      📭 No transactions found
                     </td>
                   </tr>
                 ) : (
-                  filteredTransactions.map((transaction, index) => (
+                  transactions.map((transaction, index) => (
                     <tr
                       key={index}
-                      className="bg-gray-700 text-white border dark:bg-gray-800 hover:bg-gray-200 hover:text-gray-900"
+                      className="hover:bg-gray-700 transition-colors duration-200"
                     >
-                      <th scope="row" className="px-2 py-2 font-medium whitespace-nowrap">
-                        {transaction.id}
-                      </th>
-                      <td className="px-1 py-1">{transaction.title}</td>
-                      <td className="px-1 py-1">${transaction.price}</td>
-                      <td className="px-1 py-1">{transaction.category}</td>
-                      <td className="px-1 py-1">{new Date(transaction.dateOfSale).toLocaleDateString()}</td>
+                      <td className="px-4 py-3 text-gray-300 font-mono">{transaction.id}</td>
+                      <td className="px-4 py-3 text-white">{transaction.title}</td>
+                      <td className="px-4 py-3 text-green-400">
+                        ${transaction.price.toFixed(2)}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="px-2 py-1 bg-gray-600 rounded-full text-sm text-cyan-300">
+                          {transaction.category}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-gray-400">
+                        {new Date(transaction.dateOfSale).toLocaleDateString()}
+                      </td>
                     </tr>
                   ))
                 )}
@@ -159,66 +197,136 @@ const Dashboard = () => {
           </div>
 
           {/* Pagination */}
-          <div className="text-white flex justify-between items-center px-10 mt-4">
+          <div className="mt-6 flex justify-between items-center text-gray-400">
             <button
               onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
               disabled={currentPage === 1}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-700 disabled:opacity-50 transition-all"
             >
-              Prev
+              ← Previous
             </button>
-            <span>
+            <span className="text-sm">
               Page {currentPage} of {totalPages}
             </span>
             <button
-              onClick={() =>
-                setCurrentPage((prev) =>
-                  prev < totalPages ? prev + 1 : prev
-                )
-              }
+              onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
               disabled={currentPage >= totalPages}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-700 disabled:opacity-50 transition-all"
             >
-              Next
+              Next →
             </button>
           </div>
         </div>
 
-        {/* Summary Boxes Section */}
-        <div className="w-1/2 h-[300px] text-white flex flex-col items-center justify-center mt-24">
-          <h1 className='text-center font-bold text-2xl'>Transactions Statistics</h1>
-          <div className=" mt-4 px-4 bg-gradient-to-r from-[#f2709c] to-[#ff9472] p-10 rounded-lg">
-            <h1 className='text-center font-semibold text-2xl mb-5'>Statistics: {selectedMonth}</h1>
-            <div className='grid grid-cols-3 gap-4'>
-              <div className="p-4 bg-gradient-to-r from-[#1CD8D2] to-[#93EDC7] rounded-lg shadow-md flex flex-col justify-center items-center text-center text-white h-[150px] w-[150px]">
-                <h2 className="text-md font-bold">Total Sale</h2>
-                <p className="text-xl font-extrabold">${stats.totalSaleAmount.toFixed(2)}</p>
+        {/* Statistics Section */}
+        <div className="space-y-8">
+          {/* Stats Cards */}
+          <div className="grid md:grid-cols-3 gap-4">
+            <div className="bg-gradient-to-br from-cyan-600 to-cyan-800 p-6 rounded-xl">
+              <div className="text-sm text-cyan-100 mb-2">Total Sales</div>
+              <div className="text-3xl font-bold text-white">
+                ${stats.totalSaleAmount.toFixed(2)}
               </div>
-              <div className="p-4 bg-gradient-to-r from-[#1488CC] to-[#2B32B2] rounded-lg shadow-md text-center text-white flex flex-col justify-center items-center">
-                <h2 className="text-md font-bold">Sold Items</h2>
-                <p className="text-xl font-extrabold">{stats.totalSoldItems}</p>
-              </div>
-              <div className="p-4 bg-red-500 rounded-lg shadow-md text-center text-white flex flex-col justify-center items-center">
-                <h2 className="text-md font-bold">Unsold Items</h2>
-                <p className="text-xl font-extrabold">{stats.totalNotSoldItems}</p>
-              </div>
+              <div className="text-xs text-cyan-200 mt-2">in {selectedMonth || 'all months'}</div>
+            </div>
+            <div className="bg-gradient-to-br from-blue-600 to-blue-800 p-6 rounded-xl">
+              <div className="text-sm text-blue-100 mb-2">Sold Items</div>
+              <div className="text-3xl font-bold text-white">{stats.totalSoldItems}</div>
+              <div className="text-xs text-blue-200 mt-2">successful transactions</div>
+            </div>
+            <div className="bg-gradient-to-br from-purple-600 to-purple-800 p-6 rounded-xl">
+              <div className="text-sm text-purple-100 mb-2">Unsold Items</div>
+              <div className="text-3xl font-bold text-white">{stats.totalNotSoldItems}</div>
+              <div className="text-xs text-purple-200 mt-2">remaining inventory</div>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Price Range Chart */}
-      <div className='text-red-500  mt-20 '>
-        <BarChart
-          width={800}
-          height={400}
-          data={chartData}
-          className='bg-gradient-to-r from-slate-900 to-slate-700 rounded-lg shadow-md'
-          margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-        >
-          <XAxis dataKey="range" />
-          <YAxis />
-          <Tooltip className='bg-red-500' />
-          <Bar dataKey="count" fill="#ff0000" color='red' className='bg-red-500' />
-        </BarChart>
+          {/* Bar Chart Section */}
+          <div className="bg-gray-800 p-6 rounded-xl shadow-2xl">
+            <h2 className="text-xl font-semibold text-cyan-400 mb-4">
+              Price Distribution {selectedMonth && `- ${selectedMonth}`}
+            </h2>
+            <div className="h-[400px]">
+              <RechartsResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+                  <XAxis
+                    dataKey="range"
+                    stroke="#94a3b8"
+                    fontSize={12}
+                    angle={-45}
+                    textAnchor="end"
+                    interval={0}
+                    tickMargin={10}
+                  />
+                  <YAxis
+                    stroke="#94a3b8"
+                    fontSize={12}
+                    tickFormatter={(value) => `${value}`}
+                  />
+                  <RechartsTooltip 
+                    content={<CustomBarTooltip />}
+                    cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }}  // Semi-transparent highlight
+                  />
+                  <Bar
+                    dataKey="count"
+                    fill={CHART_COLORS.bar}
+                    radius={[4, 4, 0, 0]}
+                    maxBarSize={50}
+                  >
+                    {chartData.map((entry, index) => (
+                      <Cell 
+                        key={`cell-${index}`}
+                        fill={CHART_COLORS.bar}
+                        fillOpacity={0.8}
+                        strokeWidth={1}
+                        stroke={CHART_COLORS.barHover}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </RechartsResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Pie Chart Section */}
+          {pieData.length > 0 && (
+            <div className="bg-gray-800 p-6 rounded-xl shadow-2xl">
+              <h2 className="text-xl font-semibold text-cyan-400 mb-4">
+                Category Distribution
+              </h2>
+              <div className="h-[300px]">
+                <RechartsResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      dataKey="count"
+                      nameKey="category"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={100}
+                      fill="#8884d8"
+                      label={({name, percent}) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      labelLine={true}
+                    >
+                      {pieData.map((entry, index) => (
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={CHART_COLORS.pie[index % CHART_COLORS.pie.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Legend 
+                      formatter={(value) => <span className="text-gray-300">{value}</span>}
+                    />
+                    <RechartsTooltip 
+                      content={<CustomPieTooltip />}
+                    />
+                  </PieChart>
+                </RechartsResponsiveContainer>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
